@@ -18,6 +18,9 @@
     <!-- Chart.js (Vanilla) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
+    <!-- PapaParse for robust CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
@@ -48,7 +51,6 @@
         const { useState, useMemo, useEffect, useRef } = React;
 
         // --- Blinding Logic ---
-        // We keep this to automatically blind known providers if they appear in your uploaded file.
         const providerMapping = {
             "UCSF Medical Center": "Academic Med Center (Bay Area)",
             "Advocate Aurora Health": "Integrated Health System (Midwest)",
@@ -88,28 +90,12 @@
             return <canvas ref={canvasRef} />;
         };
 
-        const parseCSV = (csv) => {
-            const lines = csv.split('\n');
-            const headers = lines[0].split(',').map(h => h.trim());
-            return lines.slice(1).map(line => {
-                // Improved regex to handle quoted fields containing commas
-                const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
-                // Fallback splitting if regex fails on simple lines
-                const simpleValues = values.length > 0 ? values : line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-                
-                const entry = {};
-                headers.forEach((h, i) => {
-                    let val = simpleValues[i] ? simpleValues[i].replace(/^"|"$/g, '').trim() : ''; // Remove surrounding quotes
-                    if (val.includes('%')) {
-                        entry[h] = parseFloat(val.replace('%', ''));
-                    } else if (!isNaN(val) && val !== '') {
-                        entry[h] = parseFloat(val);
-                    } else {
-                        entry[h] = val;
-                    }
-                });
-                return entry;
-            }).filter(row => row['Care Provider'] || row['Outreach Program Full Name']); // Filter empty rows more robustly
+        // --- Helper to clean % strings ---
+        const parsePercentage = (val) => {
+            if (typeof val === 'string') {
+                return parseFloat(val.replace('%', ''));
+            }
+            return parseFloat(val);
         };
 
         const Dashboard = () => {
@@ -119,35 +105,79 @@
             const [filterSearch, setFilterSearch] = useState('');
             const [selectedProgram, setSelectedProgram] = useState(null);
             const [isDragging, setIsDragging] = useState(false);
+            const fileInputRef = useRef(null);
 
-            // --- File Upload Handlers ---
+            // --- File Upload Handlers with PapaParse ---
             const handleFileUpload = (file) => {
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        try {
-                            const text = e.target.result;
-                            const parsed = parseCSV(text);
-                            const blindedData = parsed.map(row => ({
-                                ...row,
-                                'Care Provider': providerMapping[row['Care Provider']] || row['Care Provider']
-                            }));
-                            setData(blindedData);
-                        } catch (err) {
-                            alert("Error parsing CSV. Please check the file format.");
-                            console.error(err);
+                if (!file) return;
+
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    transformHeader: (h) => h.trim(), // Clean whitespace from headers
+                    transform: (val) => val.trim(), // Clean whitespace from values
+                    complete: (results) => {
+                        if (results.data && results.data.length > 0) {
+                            // Basic validation: check if key columns exist in first row
+                            const firstRow = results.data[0];
+                            if (!firstRow['Care Provider'] && !firstRow['Outreach Program Full Name']) {
+                                alert("Warning: Expected columns 'Care Provider' or 'Outreach Program Full Name' not found. Please check CSV format.");
+                            }
+
+                            // Process Data
+                            const processedData = results.data.map(row => {
+                                // Clean up percentages and numbers
+                                const cleanedRow = { ...row };
+                                
+                                // Normalize numerical fields
+                                const numFields = [
+                                    'Patients Outreached To', 
+                                    '% Opening Reached', 
+                                    '% Any Question Reached', 
+                                    '% Medically Reached', 
+                                    '% Completed'
+                                ];
+
+                                numFields.forEach(field => {
+                                    if (cleanedRow[field]) {
+                                        cleanedRow[field] = parsePercentage(cleanedRow[field]);
+                                    } else {
+                                        cleanedRow[field] = 0;
+                                    }
+                                });
+
+                                // Apply blinding
+                                if (cleanedRow['Care Provider']) {
+                                    cleanedRow['Care Provider'] = providerMapping[cleanedRow['Care Provider']] || cleanedRow['Care Provider'];
+                                }
+
+                                return cleanedRow;
+                            }).filter(row => (row['Patients Outreached To'] > 0)); // Filter out empty or zero volume rows immediately
+
+                            setData(processedData);
+                        } else {
+                            alert("No data found in file.");
                         }
-                    };
-                    reader.readAsText(file);
-                }
+                    },
+                    error: (err) => {
+                        console.error("CSV Parse Error:", err);
+                        alert("Error parsing CSV file. See console for details.");
+                    }
+                });
             };
 
-            const onFileChange = (e) => handleFileUpload(e.target.files[0]);
+            const onFileChange = (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    handleFileUpload(e.target.files[0]);
+                }
+            };
 
             const onDrop = (e) => {
                 e.preventDefault();
                 setIsDragging(false);
-                handleFileUpload(e.dataTransfer.files[0]);
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleFileUpload(e.dataTransfer.files[0]);
+                }
             };
 
             const onDragOver = (e) => {
@@ -160,29 +190,32 @@
                 setIsDragging(false);
             };
 
+            const triggerFileUpload = () => {
+                if (fileInputRef.current) {
+                    fileInputRef.current.value = null; // Reset to allow re-selecting same file
+                    fileInputRef.current.click();
+                }
+            };
+
             // --- Aggregation Logic ---
             const filteredData = useMemo(() => {
                 const results = data.filter(d => {
-                    // Fix: Ensure d.Status is treated as a string before calling toLowerCase
                     const statusVal = d.Status ? String(d.Status) : '';
                     const matchesStatus = filterStatus === 'All' || statusVal.toLowerCase() === filterStatus.toLowerCase();
                     
                     const providerName = d['Care Provider'] ? String(d['Care Provider']) : '';
                     const programName = d['Outreach Program Full Name'] ? String(d['Outreach Program Full Name']) : '';
+                    const programShort = d['Outreach Program'] ? String(d['Outreach Program']) : '';
                     
                     const matchesSearch = programName.toLowerCase().includes(filterSearch.toLowerCase()) || 
+                                          programShort.toLowerCase().includes(filterSearch.toLowerCase()) ||
                                           providerName.toLowerCase().includes(filterSearch.toLowerCase());
 
-                    // FILTER: Only include if volume > 0
-                    const hasVolume = (d['Patients Outreached To'] || 0) > 0;
-
-                    return matchesStatus && matchesSearch && hasVolume;
+                    return matchesStatus && matchesSearch;
                 });
 
-                // SORT: Default sort by % Completed Descending (Highest to Lowest)
                 return results.sort((a, b) => {
                     const diff = (b['% Completed'] || 0) - (a['% Completed'] || 0);
-                    // If completion % is identical, use volume as tie-breaker
                     if (diff === 0) {
                         return (b['Patients Outreached To'] || 0) - (a['Patients Outreached To'] || 0);
                     }
@@ -304,11 +337,11 @@
                                 onDragOver={onDragOver}
                                 onDragLeave={onDragLeave}
                                 onDrop={onDrop}
-                                onClick={() => document.getElementById('fileInput').click()}
+                                onClick={triggerFileUpload}
                             >
                                 <input 
                                     type="file" 
-                                    id="fileInput" 
+                                    ref={fileInputRef}
                                     accept=".csv" 
                                     className="hidden" 
                                     onChange={onFileChange}
@@ -556,8 +589,13 @@
                                             {/* REMOVED Provider Column Cell */}
                                             <td className="px-6 py-4">
                                                 <div className="flex flex-col">
-                                                    <span className="group-hover:text-blue-700 font-medium">{row['Outreach Program Full Name']}</span>
-                                                    <span className="text-xs text-gray-400">{row['Outreach Program Type']}</span>
+                                                    {/* Main text is Full Name, Sub text is Code/Type */}
+                                                    <span className="group-hover:text-blue-700 font-medium">
+                                                        {row['Outreach Program Full Name']}
+                                                    </span>
+                                                    <span className="text-xs text-gray-400">
+                                                        {row['Outreach Program'] || row['Outreach Program Type']}
+                                                    </span>
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4">{(row['Patients Outreached To'] || 0).toLocaleString()}</td>
@@ -606,7 +644,10 @@
                                             <span className="text-xs text-gray-500 uppercase font-semibold tracking-wide">{selectedProgram['Outreach Program Type']}</span>
                                         </div>
                                         <h2 className="text-xl font-bold text-gray-900">{selectedProgram['Outreach Program Full Name']}</h2>
-                                        <p className="text-sm text-blue-600 font-medium">{selectedProgram['Care Provider']}</p>
+                                        {selectedProgram['Outreach Program'] && (
+                                            <p className="text-sm text-gray-500">{selectedProgram['Outreach Program']}</p>
+                                        )}
+                                        <p className="text-sm text-blue-600 font-medium mt-1">{selectedProgram['Care Provider']}</p>
                                     </div>
                                     <button 
                                         onClick={() => setSelectedProgram(null)}
