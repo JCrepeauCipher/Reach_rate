@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outreach Program Reach Rates Dashboard</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Chart.js (Vanilla) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .card { background: white; border-radius: 0.75rem; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); }
+        /* Custom scrollbar for table */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Modal Animation */
+        .modal-enter { opacity: 0; transform: scale(0.95); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 300ms, transform 300ms; }
+        .modal-exit { opacity: 1; transform: scale(1); }
+        .modal-exit-active { opacity: 0; transform: scale(0.95); transition: opacity 300ms, transform 300ms; }
+
+        /* File Upload Zone */
+        .drop-zone { border: 2px dashed #cbd5e1; transition: all 0.2s; }
+        .drop-zone:hover { border-color: #3b82f6; background-color: #eff6ff; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+
+        // --- Blinding Logic ---
+        // We keep this to automatically blind known providers if they appear in your uploaded file.
+        const providerMapping = {
+            "UCSF Medical Center": "Academic Med Center (Bay Area)",
+            "Advocate Aurora Health": "Integrated Health System (Midwest)",
+            "Middlesex Hospital": "Community Health System (Northeast)",
+            "UCSD Medical Center": "Academic Med Center (SoCal)",
+            "Hill Physicians Medical Group": "Independent Physician Assoc. (West)",
+            "Wellstar Health System": "Integrated Health System (Southeast)"
+        };
+
+        // --- Icons (Lucide) ---
+        const Icons = {
+            Users: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+            CheckCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            AlertCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>,
+            Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+            BarChart2: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+            Filter: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>,
+            X: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>,
+            XCircle: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
+            Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+            FileSpreadsheet: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></svg>
+        };
+
+        // --- Custom Chart Component ---
+        const ChartComponent = ({ type, data, options }) => {
+            const canvasRef = useRef(null);
+            const chartInstanceRef = useRef(null);
+
+            useEffect(() => {
+                if (!canvasRef.current) return;
+                if (chartInstanceRef.current) chartInstanceRef.current.destroy();
+                const ctx = canvasRef.current.getContext('2d');
+                chartInstanceRef.current = new Chart(ctx, { type, data, options });
+                return () => { if (chartInstanceRef.current) chartInstanceRef.current.destroy(); };
+            }, [type, data, options]);
+
+            return <canvas ref={canvasRef} />;
+        };
+
+        const parseCSV = (csv) => {
+            const lines = csv.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim());
+            return lines.slice(1).map(line => {
+                // Improved regex to handle quoted fields containing commas
+                const values = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+                // Fallback splitting if regex fails on simple lines
+                const simpleValues = values.length > 0 ? values : line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+                
+                const entry = {};
+                headers.forEach((h, i) => {
+                    let val = simpleValues[i] ? simpleValues[i].replace(/^"|"$/g, '').trim() : ''; // Remove surrounding quotes
+                    if (val.includes('%')) {
+                        entry[h] = parseFloat(val.replace('%', ''));
+                    } else if (!isNaN(val) && val !== '') {
+                        entry[h] = parseFloat(val);
+                    } else {
+                        entry[h] = val;
+                    }
+                });
+                return entry;
+            }).filter(row => row['Care Provider'] || row['Outreach Program Full Name']); // Filter empty rows more robustly
+        };
+
+        const Dashboard = () => {
+            const [data, setData] = useState([]);
+            const [activeView, setActiveView] = useState('funnel'); 
+            const [filterStatus, setFilterStatus] = useState('All');
+            const [filterSearch, setFilterSearch] = useState('');
+            const [selectedProgram, setSelectedProgram] = useState(null);
+            const [isDragging, setIsDragging] = useState(false);
+
+            // --- File Upload Handlers ---
+            const handleFileUpload = (file) => {
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            const text = e.target.result;
+                            const parsed = parseCSV(text);
+                            const blindedData = parsed.map(row => ({
+                                ...row,
+                                'Care Provider': providerMapping[row['Care Provider']] || row['Care Provider']
+                            }));
+                            setData(blindedData);
+                        } catch (err) {
+                            alert("Error parsing CSV. Please check the file format.");
+                            console.error(err);
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            };
+
+            const onFileChange = (e) => handleFileUpload(e.target.files[0]);
+
+            const onDrop = (e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                handleFileUpload(e.dataTransfer.files[0]);
+            };
+
+            const onDragOver = (e) => {
+                e.preventDefault();
+                setIsDragging(true);
+            };
+
+            const onDragLeave = (e) => {
+                e.preventDefault();
+                setIsDragging(false);
+            };
+
+            // --- Aggregation Logic ---
+            const filteredData = useMemo(() => {
+                const results = data.filter(d => {
+                    // Fix: Ensure d.Status is treated as a string before calling toLowerCase
+                    const statusVal = d.Status ? String(d.Status) : '';
+                    const matchesStatus = filterStatus === 'All' || statusVal.toLowerCase() === filterStatus.toLowerCase();
+                    
+                    const providerName = d['Care Provider'] ? String(d['Care Provider']) : '';
+                    const programName = d['Outreach Program Full Name'] ? String(d['Outreach Program Full Name']) : '';
+                    
+                    const matchesSearch = programName.toLowerCase().includes(filterSearch.toLowerCase()) || 
+                                          providerName.toLowerCase().includes(filterSearch.toLowerCase());
+
+                    // FILTER: Only include if volume > 0
+                    const hasVolume = (d['Patients Outreached To'] || 0) > 0;
+
+                    return matchesStatus && matchesSearch && hasVolume;
+                });
+
+                // SORT: Default sort by % Completed Descending (Highest to Lowest)
+                return results.sort((a, b) => {
+                    const diff = (b['% Completed'] || 0) - (a['% Completed'] || 0);
+                    // If completion % is identical, use volume as tie-breaker
+                    if (diff === 0) {
+                        return (b['Patients Outreached To'] || 0) - (a['Patients Outreached To'] || 0);
+                    }
+                    return diff;
+                });
+            }, [data, filterStatus, filterSearch]);
+
+            const kpiStats = useMemo(() => {
+                const totalOutreached = filteredData.reduce((acc, curr) => acc + (curr['Patients Outreached To'] || 0), 0);
+                let totalCompletedRaw = 0;
+                filteredData.forEach(d => {
+                    const reached = d['Patients Outreached To'] || 0;
+                    const completedPct = d['% Completed'] || 0;
+                    totalCompletedRaw += (reached * (completedPct / 100));
+                });
+                const avgCompletion = totalOutreached ? ((totalCompletedRaw / totalOutreached) * 100).toFixed(1) : 0;
+                const activePrograms = filteredData.filter(d => d.Status && String(d.Status).toLowerCase() === 'active').length;
+                return { totalOutreached, avgCompletion, activePrograms };
+            }, [filteredData]);
+
+            // Main Dashboard Chart Data
+            const funnelData = useMemo(() => {
+                if (!filteredData.length) return null;
+                const funnelCounts = { outreached: 0, opening: 0, question: 0, medical: 0, completed: 0 };
+                filteredData.forEach(d => {
+                    const base = d['Patients Outreached To'] || 0;
+                    funnelCounts.outreached += base;
+                    funnelCounts.opening += base * ((d['% Opening Reached'] || 0) / 100);
+                    funnelCounts.question += base * ((d['% Any Question Reached'] || 0) / 100);
+                    funnelCounts.medical += base * ((d['% Medically Reached'] || 0) / 100);
+                    funnelCounts.completed += base * ((d['% Completed'] || 0) / 100);
+                });
+                return {
+                    labels: ['Outreached', 'Opening Reached', 'Question Reached', 'Medically Reached', 'Completed'],
+                    datasets: [{
+                        label: 'Total Patients',
+                        data: Object.values(funnelCounts),
+                        backgroundColor: ['rgba(99, 102, 241, 0.6)', 'rgba(59, 130, 246, 0.6)', 'rgba(16, 185, 129, 0.6)', 'rgba(245, 158, 11, 0.6)', 'rgba(236, 72, 153, 0.6)'],
+                        borderColor: ['rgb(99, 102, 241)', 'rgb(59, 130, 246)', 'rgb(16, 185, 129)', 'rgb(245, 158, 11)', 'rgb(236, 72, 153)'],
+                        borderWidth: 1
+                    }]
+                };
+            }, [filteredData]);
+
+            const providerData = useMemo(() => {
+                const providers = [...new Set(filteredData.map(d => d['Care Provider']))];
+                const dataPoints = providers.map(p => {
+                    if (!p) return 0;
+                    const providerRows = filteredData.filter(d => d['Care Provider'] === p);
+                    const totalP = providerRows.reduce((acc, curr) => acc + (curr['Patients Outreached To'] || 0), 0);
+                    let totalComp = 0;
+                    providerRows.forEach(d => totalComp += ((d['Patients Outreached To'] || 0) * ((d['% Completed'] || 0) / 100)));
+                    return totalP ? (totalComp / totalP) * 100 : 0;
+                });
+                return {
+                    labels: providers,
+                    datasets: [{
+                        label: '% Completion Rate (Weighted)',
+                        data: dataPoints,
+                        backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                        borderRadius: 4
+                    }]
+                };
+            }, [filteredData]);
+
+            // Single Program Modal Chart Data
+            const singleProgramData = useMemo(() => {
+                if (!selectedProgram) return null;
+                const base = selectedProgram['Patients Outreached To'] || 0;
+                const d = [
+                    base,
+                    Math.round(base * ((selectedProgram['% Opening Reached'] || 0) / 100)),
+                    Math.round(base * ((selectedProgram['% Any Question Reached'] || 0) / 100)),
+                    Math.round(base * ((selectedProgram['% Medically Reached'] || 0) / 100)),
+                    Math.round(base * ((selectedProgram['% Completed'] || 0) / 100))
+                ];
+                
+                return {
+                    labels: ['Outreached', 'Opening Reached', 'Question Reached', 'Medically Reached', 'Completed'],
+                    datasets: [{
+                        label: 'Patients',
+                        data: d,
+                        backgroundColor: [
+                            'rgba(99, 102, 241, 0.7)',
+                            'rgba(59, 130, 246, 0.7)',
+                            'rgba(16, 185, 129, 0.7)',
+                            'rgba(245, 158, 11, 0.7)',
+                            'rgba(236, 72, 153, 0.7)'
+                        ],
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                };
+            }, [selectedProgram]);
+
+
+            const clearFilters = () => {
+                setFilterStatus('All');
+                setFilterSearch('');
+            };
+
+            const hasActiveFilters = filterStatus !== 'All' || filterSearch !== '';
+
+            // --- RENDER: Upload Screen if no data ---
+            if (data.length === 0) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+                        <div className="max-w-xl w-full">
+                            <div className="text-center mb-8">
+                                <div className="mx-auto w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4">
+                                    <Icons.BarChart2 />
+                                </div>
+                                <h1 className="text-3xl font-bold text-gray-900">Reach Rates Dashboard</h1>
+                                <p className="text-gray-500 mt-2">Upload your outreach data CSV to generate the analytics.</p>
+                            </div>
+
+                            <div 
+                                className={`drop-zone p-10 rounded-2xl bg-white text-center cursor-pointer ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
+                                onDragOver={onDragOver}
+                                onDragLeave={onDragLeave}
+                                onDrop={onDrop}
+                                onClick={() => document.getElementById('fileInput').click()}
+                            >
+                                <input 
+                                    type="file" 
+                                    id="fileInput" 
+                                    accept=".csv" 
+                                    className="hidden" 
+                                    onChange={onFileChange}
+                                />
+                                <div className="mx-auto w-12 h-12 bg-gray-100 text-gray-500 rounded-full flex items-center justify-center mb-4">
+                                    <Icons.Upload />
+                                </div>
+                                <h3 className="text-lg font-semibold text-gray-700">Click to upload or drag & drop</h3>
+                                <p className="text-sm text-gray-400 mt-1">Supported file: .CSV</p>
+                            </div>
+
+                            <div className="mt-8 bg-blue-50 border border-blue-100 rounded-lg p-4">
+                                <h4 className="font-semibold text-blue-800 text-sm flex items-center gap-2">
+                                    <Icons.FileSpreadsheet /> CSV Format Required
+                                </h4>
+                                <p className="text-xs text-blue-600 mt-1">
+                                    Columns: Care Provider, Status, Outreach Program Full Name, Patients Outreached To, % Opening Reached, % Completed, Recommendation 1...
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- RENDER: Dashboard if data exists ---
+            return (
+                <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-6 relative">
+                    
+                    {/* Header & Global Filters */}
+                    <div className="flex flex-col gap-6">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                                    <Icons.BarChart2 />
+                                    Reach Rates Dashboard
+                                </h1>
+                                <p className="text-gray-500 text-sm">Monitoring outreach program efficacy (Blinded Data)</p>
+                            </div>
+                            <button 
+                                onClick={() => setData([])}
+                                className="text-sm text-gray-500 hover:text-blue-600 flex items-center gap-1 transition-colors"
+                            >
+                                <Icons.Upload /> Upload New File
+                            </button>
+                        </div>
+
+                        {/* Filter Bar */}
+                        <div className="card p-4 flex flex-col md:flex-row gap-4 items-center">
+                            <div className="flex items-center gap-2 w-full md:w-auto flex-1">
+                                <div className="relative w-full">
+                                    <span className="absolute left-3 top-2.5 text-gray-400">
+                                        <Icons.Search />
+                                    </span>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search programs or providers..." 
+                                        className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        value={filterSearch}
+                                        onChange={(e) => setFilterSearch(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div className="flex gap-4 w-full md:w-auto overflow-x-auto">
+                                <div className="flex flex-col gap-1 min-w-[200px]">
+                                    <label className="text-xs font-semibold text-gray-500 uppercase">Status</label>
+                                    <div className="inline-flex rounded-md shadow-sm" role="group">
+                                        {['All', 'Active', 'Paused'].map(status => (
+                                            <button
+                                                key={status}
+                                                onClick={() => setFilterStatus(status)}
+                                                className={`px-3 py-2 text-sm font-medium border first:rounded-l-lg last:rounded-r-lg flex-1 ${
+                                                    filterStatus === status 
+                                                    ? 'bg-blue-600 text-white border-blue-600' 
+                                                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                {status}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {hasActiveFilters && (
+                                <button 
+                                    onClick={clearFilters}
+                                    className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg border border-red-200 flex items-center gap-2 transition-colors whitespace-nowrap"
+                                >
+                                    <Icons.X /> Clear Filters
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* KPI Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="card p-5 border-l-4 border-blue-500">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <p className="text-gray-500 text-sm font-medium">Total Outreached</p>
+                                    <h3 className="text-3xl font-bold text-gray-800 mt-1">{kpiStats.totalOutreached.toLocaleString()}</h3>
+                                </div>
+                                <div className="p-2 bg-blue-100 rounded-lg text-blue-600">
+                                    <Icons.Users />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="card p-5 border-l-4 border-green-500">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <p className="text-gray-500 text-sm font-medium">Avg. Completion Rate</p>
+                                    <h3 className="text-3xl font-bold text-gray-800 mt-1">{kpiStats.avgCompletion}%</h3>
+                                </div>
+                                <div className="p-2 bg-green-100 rounded-lg text-green-600">
+                                    <Icons.CheckCircle />
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-2">Weighted by volume</p>
+                        </div>
+                        <div className="card p-5 border-l-4 border-purple-500">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <p className="text-gray-500 text-sm font-medium">Active Programs</p>
+                                    <h3 className="text-3xl font-bold text-gray-800 mt-1">{kpiStats.activePrograms}</h3>
+                                </div>
+                                <div className="p-2 bg-purple-100 rounded-lg text-purple-600">
+                                    <Icons.AlertCircle />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Chart Section */}
+                    <div className="card p-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-lg font-bold text-gray-800">
+                                {activeView === 'funnel' ? 'Engagement Funnel Analysis' : 'Provider Performance Comparison'}
+                            </h2>
+                            <div className="flex bg-gray-100 p-1 rounded-lg">
+                                <button
+                                    onClick={() => setActiveView('funnel')}
+                                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'funnel' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}
+                                >
+                                    Funnel View
+                                </button>
+                                <button
+                                    onClick={() => setActiveView('provider')}
+                                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeView === 'provider' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}
+                                >
+                                    Provider View
+                                </button>
+                            </div>
+                        </div>
+                        <div className="h-80 w-full relative">
+                            {activeView === 'funnel' && funnelData && (
+                                <ChartComponent 
+                                    type="bar"
+                                    data={funnelData} 
+                                    options={{
+                                        responsive: true,
+                                        maintainAspectRatio: false,
+                                        indexAxis: 'y', 
+                                        plugins: { 
+                                            legend: { display: false },
+                                            tooltip: {
+                                                callbacks: {
+                                                    label: function(context) {
+                                                        let label = context.dataset.label || '';
+                                                        if (label) label += ': ';
+                                                        if (context.parsed.x !== null) {
+                                                            const value = context.parsed.x;
+                                                            label += Math.round(value).toLocaleString();
+                                                            // Calculate percentage relative to the first data point (Outreached)
+                                                            const total = context.chart.data.datasets[context.datasetIndex].data[0];
+                                                            if (total > 0) {
+                                                                const percentage = ((value / total) * 100).toFixed(1);
+                                                                label += ` (${percentage}%)`;
+                                                            }
+                                                        }
+                                                        return label;
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        scales: { x: { grid: { display: false } }, y: { grid: { display: false } } }
+                                    }} 
+                                />
+                            )}
+                            {activeView === 'provider' && providerData && (
+                                <ChartComponent 
+                                    type="bar"
+                                    data={providerData} 
+                                    options={{
+                                        responsive: true,
+                                        maintainAspectRatio: false,
+                                        plugins: { 
+                                            legend: { display: false },
+                                            tooltip: {
+                                                callbacks: {
+                                                    label: function(context) {
+                                                        let label = context.dataset.label || '';
+                                                        if (label) label += ': ';
+                                                        if (context.parsed.y !== null) {
+                                                            label += context.parsed.y.toFixed(1) + '%';
+                                                        }
+                                                        return label;
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        scales: { y: { beginAtZero: true, max: 100 } }
+                                    }} 
+                                />
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Detailed Data Table */}
+                    <div className="card overflow-hidden">
+                        <div className="p-5 border-b border-gray-100">
+                            <h2 className="text-lg font-bold text-gray-800">Program Details</h2>
+                            <p className="text-xs text-gray-400 mt-1">Click on a row to view the detailed engagement funnel.</p>
+                        </div>
+                        <div className="overflow-x-auto custom-scrollbar">
+                            <table className="w-full text-left text-sm text-gray-600">
+                                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                                    <tr>
+                                        {/* REMOVED Provider Column */}
+                                        <th className="px-6 py-3 font-semibold">Program</th>
+                                        <th className="px-6 py-3 font-semibold">Vol.</th>
+                                        <th className="px-6 py-3 font-semibold">Complete %</th>
+                                        {/* REMOVED Recommendation Column */}
+                                        <th className="px-6 py-3 font-semibold">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {filteredData.map((row, idx) => {
+                                        return (
+                                        <tr 
+                                            key={idx} 
+                                            onClick={() => setSelectedProgram(row)}
+                                            className="hover:bg-blue-50 cursor-pointer transition-colors group"
+                                        >
+                                            {/* REMOVED Provider Column Cell */}
+                                            <td className="px-6 py-4">
+                                                <div className="flex flex-col">
+                                                    <span className="group-hover:text-blue-700 font-medium">{row['Outreach Program Full Name']}</span>
+                                                    <span className="text-xs text-gray-400">{row['Outreach Program Type']}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">{(row['Patients Outreached To'] || 0).toLocaleString()}</td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                                                    row['% Completed'] >= 50 ? 'bg-green-100 text-green-700' :
+                                                    row['% Completed'] >= 20 ? 'bg-yellow-100 text-yellow-700' :
+                                                    'bg-red-100 text-red-700'
+                                                }`}>
+                                                    {row['% Completed']}%
+                                                </span>
+                                            </td>
+                                            {/* REMOVED Recommendation Column Cell */}
+                                            <td className="px-6 py-4">
+                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                                    (row.Status && String(row.Status).toLowerCase()) === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                                }`}>
+                                                    {row.Status}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )})}
+                                </tbody>
+                            </table>
+                            {filteredData.length === 0 && (
+                                <div className="p-8 text-center text-gray-500">
+                                    No programs found matching your filters (or empty data).
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* --- Detail Modal --- */}
+                    {selectedProgram && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setSelectedProgram(null)}>
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col" onClick={e => e.stopPropagation()}>
+                                {/* Modal Header */}
+                                <div className="p-6 border-b border-gray-100 flex justify-between items-start sticky top-0 bg-white z-10">
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium uppercase ${
+                                                (selectedProgram.Status && String(selectedProgram.Status).toLowerCase()) === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                            }`}>
+                                                {selectedProgram.Status}
+                                            </span>
+                                            <span className="text-xs text-gray-500 uppercase font-semibold tracking-wide">{selectedProgram['Outreach Program Type']}</span>
+                                        </div>
+                                        <h2 className="text-xl font-bold text-gray-900">{selectedProgram['Outreach Program Full Name']}</h2>
+                                        <p className="text-sm text-blue-600 font-medium">{selectedProgram['Care Provider']}</p>
+                                    </div>
+                                    <button 
+                                        onClick={() => setSelectedProgram(null)}
+                                        className="text-gray-400 hover:text-gray-600 p-1 hover:bg-gray-100 rounded-full transition-colors"
+                                    >
+                                        <Icons.XCircle />
+                                    </button>
+                                </div>
+
+                                {/* Modal Body */}
+                                <div className="p-6 space-y-8">
+                                    
+                                    {/* Stats Row */}
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <div className="p-4 bg-gray-50 rounded-lg text-center">
+                                            <div className="text-xs text-gray-500 uppercase font-semibold">Outreach Volume</div>
+                                            <div className="text-2xl font-bold text-gray-800">{(selectedProgram['Patients Outreached To'] || 0).toLocaleString()}</div>
+                                        </div>
+                                        <div className="p-4 bg-gray-50 rounded-lg text-center">
+                                            <div className="text-xs text-gray-500 uppercase font-semibold">Completion Rate</div>
+                                            <div className={`text-2xl font-bold ${
+                                                selectedProgram['% Completed'] >= 50 ? 'text-green-600' : 
+                                                selectedProgram['% Completed'] >= 20 ? 'text-yellow-600' : 'text-red-600'
+                                            }`}>
+                                                {selectedProgram['% Completed']}%
+                                            </div>
+                                        </div>
+                                        <div className="p-4 bg-gray-50 rounded-lg text-center">
+                                            <div className="text-xs text-gray-500 uppercase font-semibold">Drop-off (Open -> Q)</div>
+                                            <div className="text-2xl font-bold text-gray-800">
+                                                {Math.max(0, (selectedProgram['% Opening Reached'] || 0) - (selectedProgram['% Any Question Reached'] || 0)).toFixed(0)}%
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Funnel Chart */}
+                                    <div>
+                                        <h3 className="text-sm font-bold text-gray-700 mb-4 border-l-4 border-blue-500 pl-3">Program Engagement Funnel</h3>
+                                        <div className="h-64 w-full bg-white border border-gray-100 rounded-lg p-2">
+                                            {singleProgramData && (
+                                                <ChartComponent 
+                                                    type="bar"
+                                                    data={singleProgramData}
+                                                    options={{
+                                                        responsive: true,
+                                                        maintainAspectRatio: false,
+                                                        indexAxis: 'y',
+                                                        plugins: { 
+                                                            legend: { display: false },
+                                                            tooltip: {
+                                                                callbacks: {
+                                                                    label: function(context) {
+                                                                        let label = context.dataset.label || '';
+                                                                        if (label) label += ': ';
+                                                                        if (context.parsed.x !== null) {
+                                                                            const value = context.parsed.x;
+                                                                            label += Math.round(value).toLocaleString();
+                                                                            const total = context.chart.data.datasets[context.datasetIndex].data[0];
+                                                                            if (total > 0) {
+                                                                                const percentage = ((value / total) * 100).toFixed(1);
+                                                                                label += ` (${percentage}%)`;
+                                                                            }
+                                                                        }
+                                                                        return label;
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                        scales: {
+                                                            x: { grid: { display: false } },
+                                                            y: { grid: { display: false } }
+                                                        }
+                                                    }}
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Recommendations */}
+                                    <div>
+                                        <h3 className="text-sm font-bold text-gray-700 mb-3 border-l-4 border-amber-500 pl-3">Operational Recommendations</h3>
+                                        {selectedProgram['Recommendation 1'] ? (
+                                            <div className="bg-amber-50 border border-amber-100 rounded-lg p-4 flex gap-3 items-start mb-3">
+                                                <div className="text-amber-600 mt-0.5"><Icons.AlertCircle /></div>
+                                                <div>
+                                                    <p className="text-sm text-gray-800 font-medium">Primary Recommendation</p>
+                                                    <p className="text-sm text-gray-600 mt-1">{selectedProgram['Recommendation 1']}</p>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                        
+                                        {selectedProgram['Recommendation 2'] ? (
+                                            <div className="bg-amber-50 border border-amber-100 rounded-lg p-4 flex gap-3 items-start">
+                                                <div className="text-amber-600 mt-0.5"><Icons.AlertCircle /></div>
+                                                <div>
+                                                    <p className="text-sm text-gray-800 font-medium">Secondary Recommendation</p>
+                                                    <p className="text-sm text-gray-600 mt-1">{selectedProgram['Recommendation 2']}</p>
+                                                </div>
+                                            </div>
+                                        ) : null}
+
+                                        {!selectedProgram['Recommendation 1'] && !selectedProgram['Recommendation 2'] ? (
+                                            <div className="bg-green-50 border border-green-100 rounded-lg p-4 flex gap-3 items-center">
+                                                <div className="text-green-600"><Icons.CheckCircle /></div>
+                                                <p className="text-sm text-gray-600">No critical recommendations flagged. Program performing within expected parameters.</p>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Dashboard />);
+    </script>
+</body>
+</html>
